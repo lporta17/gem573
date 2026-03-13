@@ -210,6 +210,8 @@ class IllegalFrmFault: public InstFault
     void invokeSE(ThreadContext *tc, const StaticInstPtr &inst) override;
 };
 
+// TODO: Add new code to address fault
+// TODO: Figure out how to handle fault?
 class AddressFault : public RiscvFault
 {
   private:

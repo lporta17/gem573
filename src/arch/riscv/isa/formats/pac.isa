@@ -1,0 +1,141 @@
+// -*- mode:c++ -*-
+
+def template PACAuthDeclare {{
+    //
+    // Static instruction class for "%(mnemonic)s".
+    //
+    class %(class_name)s : public %(base_class)s
+    {
+      private:
+        %(reg_idx_arr_decl)s;
+
+      public:
+        /// Constructor.
+        %(class_name)s(ExtMachInst machInst);
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        std::string generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const override;
+    };
+}};
+
+def template PACAuthConstructor {{
+    %(class_name)s::%(class_name)s(ExtMachInst machInst)
+        : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s)
+    {
+        %(set_reg_idx_arr)s;
+        %(constructor)s;
+        %(imm_code)s;
+    }
+}};
+
+def template PACAuthExecute {{
+    Fault
+    %(class_name)s::execute(
+        ExecContext *xc, trace::InstRecord *traceData) const
+    {
+        %(op_decl)s;
+        %(op_rd)s;
+
+        %(code)s;
+
+        %(op_wb)s;
+        return NoFault;
+    }
+
+    std::string
+    %(class_name)s::generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const
+    {
+        std::vector<RegId> indices = {%(regs)s};
+        std::stringstream ss;
+        ss << mnemonic << ' ';
+        for (const RegId& idx: indices)
+            ss << registerName(idx) << ", ";
+        ss << imm;
+        return ss.str();
+    }
+}};
+
+def template PACCheckDeclare {{
+    //
+    // Static instruction class for "%(mnemonic)s".
+    //
+    class %(class_name)s : public %(base_class)s
+    {
+      private:
+        %(reg_idx_arr_decl)s;
+
+      public:
+        /// Constructor.
+        %(class_name)s(ExtMachInst machInst);
+        Fault execute(ExecContext *, trace::InstRecord *) const override;
+        std::string generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const override;
+    };
+}};
+
+def template PACCheckConstructor {{
+    %(class_name)s::%(class_name)s(ExtMachInst machInst)
+        : %(base_class)s("%(mnemonic)s", machInst, %(op_class)s)
+    {
+        %(set_reg_idx_arr)s;
+        %(constructor)s;
+        %(imm_code)s;
+    }
+}};
+
+def template PACCheckExecute {{
+    Fault
+    %(class_name)s::execute(
+        ExecContext *xc, trace::InstRecord *traceData) const
+    {
+        %(op_decl)s;
+        %(op_rd)s;
+
+        {
+            bool valid = false;
+
+            %(code)s;
+
+            if (valid == false) {
+                // TODO: Update fault code
+                return std::make_shared<AddressFault>(
+                    "Pointer validation failed!", machInst, LOAD_ADDR_MISALIGNED);
+            }
+        }
+
+        %(op_wb)s;
+        return NoFault;
+    }
+
+    std::string
+    %(class_name)s::generateDisassembly(Addr pc,
+            const loader::SymbolTable *symtab) const
+    {
+        std::vector<RegId> indices = {%(regs)s};
+        std::stringstream ss;
+        ss << mnemonic << ' ';
+        for (const RegId& idx: indices)
+            ss << registerName(idx) << ", ";
+        ss << imm;
+        return ss.str();
+    }
+}};
+
+def format PACAuth(code, *opt_flags) {{
+    regs = ['destRegIdx(0)','srcRegIdx(0)']
+    iop = InstObjParams(name, Name, 'PtrOp', {'code': code, 'regs': ','.join(regs)}, opt_flags)
+    header_output = PACAuthDeclare.subst(iop)
+    decoder_output = PACAuthConstructor.subst(iop)
+    decode_block = BasicDecode.subst(iop)
+    exec_output = PACAuthExecute.subst(iop)
+}};
+
+def format PACCheck(code, *opt_flags) {{
+    regs = ['destRegIdx(0)','srcRegIdx(0)']
+    iop = InstObjParams(name, Name, 'PtrOp', {'code': code, 'regs': ','.join(regs)}, opt_flags)
+    header_output = PACCheckDeclare.subst(iop)
+    decoder_output = PACCheckConstructor.subst(iop)
+    decode_block = BasicDecode.subst(iop)
+    exec_output = PACCheckExecute.subst(iop)
+}};

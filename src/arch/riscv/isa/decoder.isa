@@ -535,6 +535,39 @@ decode QUADRANT default Unknown::unknown() {
         }
     }
     0x3: decode OPCODE5 {
+        // TODO: Our new instructions
+        0x02: decode FUNCT3 {
+            format PAC {
+                0x0: pauth_xor({{
+                    // TODO: Write XOR authentication embed code
+                }});
+
+                0x1: pauth_quarma({{
+                    //
+                }});
+
+                0x2: pauth_craft({{
+                    //
+                }});
+
+                0x3: pauth_ascon({{
+                    //
+                }});
+            }
+        }
+
+        0x0A: decode FUNCT3 {
+            format PAC {
+                0x0: pcheck_xor({{
+                    // TODO: Write XOR validation code
+                }});
+
+                0x1: pcheck_quarma({{
+                    //
+                }});
+            }
+        }
+
         0x00: decode FUNCT3 {
             format Load {
                 0x0: lb({{
