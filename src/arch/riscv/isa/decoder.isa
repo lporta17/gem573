@@ -540,6 +540,14 @@ decode QUADRANT default Unknown::unknown() {
             format PAC {
                 0x0: pauth_xor({{
                     // TODO: Write XOR authentication embed code
+
+                    uint64_t raw_ptr = Rs1 & //;
+
+                    uint64_t addr_fold = (raw_ptr & //) ^ ((raw_ptr >> 16) & //) ^ ((raw_ptr >> 32) & //);
+
+                    uint64_t key_fold = (Rs2 & //) ^ ((Rs2 >> 16) & //) ^ ((Rs2 >> 32) & //) ^ ((Rs2 >> 48) & //);
+
+                    Rd = (((addr_fold ^ key_fold) & //) << 48) | raw_ptr;
                 }});
 
                 0x1: pauth_quarma({{
@@ -560,6 +568,24 @@ decode QUADRANT default Unknown::unknown() {
             format PAC {
                 0x0: pcheck_xor({{
                     // TODO: Write XOR validation code
+
+                    uint64_t stored_pac = (Rs1 >> 48) & //;
+                    uint64_t raw_ptr =  Rs1 & //;
+
+                    uint64_t addr_fold = (raw_ptr & //) ^ ((raw_ptr >> 16) & //) ^ ((raw_ptr >> 32) & //);
+
+                    uint64_t key_fold = (Rs2 & //) ^ ((Rs2 >> 16) & //) ^ ((Rs2 >> 32) & //) ^ ((Rs2 >> 48) & //);
+
+                    uint64_t expected_pac = (addr_fold ^ key_fold) & //;
+
+                    if (stored_pac == expected_pac) {
+                        if (raw_ptr & (1ULL << 47))
+                            Rd = raw_ptr | //;
+                        else
+                            Rd = raw_ptr;
+                    } else {
+                        Rd = //;
+                    }
                 }});
 
                 0x1: pcheck_quarma({{
