@@ -538,27 +538,30 @@ decode QUADRANT default Unknown::unknown() {
         // TODO: Our new instructions
         0x02: decode FUNCT3 {
             format PAC {
-                0x0: pauth_xor({{
-                    // TODO: Write XOR authentication embed code
+                0x0: pauth_xor({{ //the basic implementation, fast but not greate
 
-                    uint64_t raw_ptr = Rs1 & //;
+                    //this is the hash for XOR
+                    //the way is works is
+                    //it aims to make a 16 bit key, and place it in the highest 16 bits of the 64 bit reg pointer, while last 48 bits keep the prefetch_i
+                    //its an xor of two things:
+                    //1. the 48 bit pointer, xor folded every 16 bits
+                    //2. the 64 bit RS2, xor folded every 16 bits
 
-                    uint64_t addr_fold = (raw_ptr & //) ^ ((raw_ptr >> 16) & //) ^ ((raw_ptr >> 32) & //);
-
-                    uint64_t key_fold = (Rs2 & //) ^ ((Rs2 >> 16) & //) ^ ((Rs2 >> 32) & //) ^ ((Rs2 >> 48) & //);
-
-                    Rd = (((addr_fold ^ key_fold) & //) << 48) | raw_ptr;
+                    uint64_t raw_ptr = Rs1 & 0x0000FFFFFFFFFFFFULL;  //adding ULL is needed on 64 bit constant, tells it to make it an unsigned long long
+                    uint64_t addr_fold = ((raw_ptr) ^ (raw_ptr >> 16) ^ (raw_ptr >> 32)) & 0xFFFF;
+                    uint64_t key_fold = ((Rs2) ^ (Rs2 >> 16) ^ (Rs2 >> 32) ^ (Rs2 >> 48)) & 0xFFFF;
+                    Rd = ((addr_fold ^ key_fold) << 48) | raw_ptr;
                 }});
 
-                0x1: pauth_quarma({{
+                0x1: pauth_quarma({{ //standard and good
                     //
                 }});
 
-                0x2: pauth_craft({{
+                0x2: pauth_craft({{  //like quarma, but the cycper operations itself are more hardware friendly
                     //
                 }});
 
-                0x3: pauth_ascon({{
+                0x3: pauth_ascon({{   //side channel resistant
                     //
                 }});
             }
@@ -567,24 +570,23 @@ decode QUADRANT default Unknown::unknown() {
         0x0A: decode FUNCT3 {
             format PAC {
                 0x0: pcheck_xor({{
-                    // TODO: Write XOR validation code
+                    //as above but in reverse
 
-                    uint64_t stored_pac = (Rs1 >> 48) & //;
-                    uint64_t raw_ptr =  Rs1 & //;
-
-                    uint64_t addr_fold = (raw_ptr & //) ^ ((raw_ptr >> 16) & //) ^ ((raw_ptr >> 32) & //);
-
-                    uint64_t key_fold = (Rs2 & //) ^ ((Rs2 >> 16) & //) ^ ((Rs2 >> 32) & //) ^ ((Rs2 >> 48) & //);
-
-                    uint64_t expected_pac = (addr_fold ^ key_fold) & //;
+                    uint64_t stored_pac = (Rs1 >> 48) & 0xFFFF;
+                    uint64_t raw_ptr =  Rs1 & 0x0000FFFFFFFFFFFF;
+                    uint64_t addr_fold = ((raw_ptr) ^ (raw_ptr >> 16) ^ (raw_ptr >> 32)) & 0xFFFF;
+                    uint64_t key_fold = ((Rs2) ^ (Rs2 >> 16) ^ (Rs2 >> 32) ^ (Rs2 >> 48)) & 0xFFFF;
+                    uint64_t expected_pac = (addr_fold ^ key_fold);
 
                     if (stored_pac == expected_pac) {
                         if (raw_ptr & (1ULL << 47))
-                            Rd = raw_ptr | //;
+                            Rd = raw_ptr | 0xFFFF000000000000ULL; // Set top 16 bits to 1
                         else
                             Rd = raw_ptr;
                     } else {
-                        Rd = //;
+                        Rd = 0xDEADDEADDEADDEADULL;
+                        return std::make_shared<IllegalInstFault>("PAC Verification Failed", machInst);
+                        //posible todo, define a new ExceptionCode in src/arch/riscv/interrupts.h, if we really want a custom error type
                     }
                 }});
 
