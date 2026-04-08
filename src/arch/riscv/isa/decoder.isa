@@ -537,8 +537,8 @@ decode QUADRANT default Unknown::unknown() {
     0x3: decode OPCODE5 {
         // TODO: Our new instructions
         0x02: decode FUNCT3 {
-            format PAC {
-                0x0: pauth_xor({{ //the basic implementation, fast but not greate
+            format PACAuth {
+                0x0: pauth_xor({{ //the basic implementation, fast but not great
 
                     //this is the hash for XOR
                     //the way is works is
@@ -568,7 +568,7 @@ decode QUADRANT default Unknown::unknown() {
         }
 
         0x0A: decode FUNCT3 {
-            format PAC {
+            format PACCheck {
                 0x0: pcheck_xor({{
                     //as above but in reverse
 
