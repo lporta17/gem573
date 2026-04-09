@@ -554,7 +554,141 @@ decode QUADRANT default Unknown::unknown() {
                 }});
 
                 0x1: pauth_quarma({{ //standard and good
-                    //
+                    // QARMA-5 tweakable block cipher PAC generation
+                    // Rs1 = pointer, Rs2 = key/context
+                    // Result: PAC in bits [63:48], original pointer in bits [47:0]
+                
+                    static const uint8_t qarma_sbox[16] = {
+                        0x0, 0xE, 0x2, 0xA, 0x9, 0xF, 0x8, 0xB,
+                        0x6, 0x4, 0x3, 0x7, 0xD, 0xC, 0x1, 0x5
+                    };
+                    static const uint8_t qarma_shift[16] = {
+                        0, 11, 6, 13, 10, 1, 12, 7, 5, 14, 3, 8, 15, 4, 9, 2
+                    };
+                    static const uint8_t qarma_shift_inv[16] = {
+                        0, 5, 15, 10, 13, 8, 2, 7, 11, 14, 4, 1, 6, 3, 9, 12
+                    };
+                    static const uint8_t qarma_mix[4][4] = {
+                        {0, 1, 2, 1},
+                        {1, 0, 1, 2},
+                        {2, 1, 0, 1},
+                        {1, 2, 1, 0}
+                    };
+                    static const uint64_t qarma_rc[8] = {
+                        0x0000000000000000ULL,
+                        0x13198A2E03707344ULL,
+                        0xA4093822299F31D0ULL,
+                        0x082EFA98EC4E6C89ULL,
+                        0x452821E638D01377ULL,
+                        0xBE5466CF34E90C6CULL,
+                        0x7EF84F78FD955CB1ULL,
+                        0x85840851F1AC43AAULL,
+                    };
+                
+                    // GF(2^4) multiply, primitive poly x^4 + x + 1
+                    auto qarma_gf16_mul = [](uint8_t a, uint8_t b) -> uint8_t {
+                        uint8_t result = 0;
+                        for (int i = 0; i < 4; i++) {
+                            if (b & 1) result ^= a;
+                            bool hi = (a & 0x8);
+                            a <<= 1;
+                            if (hi) a ^= 0x3;
+                            b >>= 1;
+                        }
+                        return result & 0xF;
+                    };
+                
+                    auto qarma_pack = [](const uint8_t cells[16]) -> uint64_t {
+                        uint64_t out = 0;
+                        for (int i = 0; i < 16; i++)
+                            out |= ((uint64_t)(cells[i] & 0xF)) << (60 - i * 4);
+                        return out;
+                    };
+                
+                    auto qarma_unpack = [](uint64_t v, uint8_t cells[16]) {
+                        for (int i = 0; i < 16; i++)
+                            cells[i] = (v >> (60 - i * 4)) & 0xF;
+                    };
+                
+                    auto qarma_subcell = [&qarma_sbox](uint8_t cells[16]) {
+                        for (int i = 0; i < 16; i++)
+                            cells[i] = qarma_sbox[cells[i]];
+                    };
+                
+                    auto qarma_shiftrows = [&qarma_shift, &qarma_shift_inv](uint8_t cells[16], bool inverse) {
+                        uint8_t tmp[16];
+                        const uint8_t* p = inverse ? qarma_shift_inv : qarma_shift;
+                        for (int i = 0; i < 16; i++)
+                            tmp[i] = cells[p[i]];
+                        for (int i = 0; i < 16; i++)
+                            cells[i] = tmp[i];
+                    };
+                
+                    auto qarma_mixcols = [&qarma_mix, &qarma_gf16_mul](uint8_t cells[16]) {
+                        for (int col = 0; col < 4; col++) {
+                            uint8_t in[4] = {
+                                cells[col], cells[col+4], cells[col+8], cells[col+12]
+                            };
+                            for (int row = 0; row < 4; row++) {
+                                uint8_t acc = 0;
+                                for (int k = 0; k < 4; k++)
+                                    acc ^= qarma_gf16_mul(qarma_mix[row][k], in[k]);
+                                cells[row*4 + col] = acc;
+                            }
+                        }
+                    };
+                
+                    auto qarma_update_tweak = [](uint64_t w) -> uint64_t {
+                        return (w << 1) | (w >> 63);
+                    };
+                
+                    // Key schedule
+                    uint64_t k0 = Rs2;
+                    uint64_t k1 = (k0 << 1) | (k0 >> 63);
+                
+                    // Strip existing PAC bits from pointer
+                    uint64_t raw_ptr = Rs1 & 0x0000FFFFFFFFFFFFULL;
+                
+                    // Initial whitening
+                    uint64_t state = raw_ptr ^ k0;
+                    uint64_t tweak = Rs2;
+                
+                    uint8_t cells[16];
+                
+                    // Forward rounds (5)
+                    for (int r = 0; r < 5; r++) {
+                        qarma_unpack(state, cells);
+                        uint64_t tmp = qarma_pack(cells) ^ qarma_rc[r] ^ tweak;
+                        qarma_unpack(tmp, cells);
+                        qarma_subcell(cells);
+                        qarma_shiftrows(cells, false);
+                        if (r < 4) qarma_mixcols(cells);
+                        state = qarma_pack(cells);
+                        tweak = qarma_update_tweak(tweak);
+                    }
+                
+                    // Reflection: S-box is involutory, so subcell serves as its own inverse
+                    qarma_unpack(state, cells);
+                    qarma_subcell(cells);
+                    state = qarma_pack(cells);
+                
+                    // Backward rounds (5)
+                    for (int r = 4; r >= 0; r--) {
+                        qarma_unpack(state, cells);
+                        if (r < 4) qarma_mixcols(cells);
+                        qarma_shiftrows(cells, true);
+                        qarma_subcell(cells);
+                        uint64_t tmp = qarma_pack(cells) ^ qarma_rc[r] ^ tweak;
+                        qarma_unpack(tmp, cells);
+                        state = qarma_pack(cells);
+                        tweak = qarma_update_tweak(tweak);
+                    }
+                
+                    // Output whitening
+                    state ^= k1;
+                
+                    uint64_t pac = state & 0xFFFFULL;
+                    Rd = (pac << 48) | raw_ptr;
                 }});
 
                 0x2: pauth_craft({{  //like quarma, but the cycper operations itself are more hardware friendly
@@ -572,26 +706,166 @@ decode QUADRANT default Unknown::unknown() {
                 0x0: pcheck_xor({{
                     //as above but in reverse
 
-                    uint64_t stored_pac = (Rs1 >> 48) & 0xFFFF;
-                    uint64_t raw_ptr =  Rs1 & 0x0000FFFFFFFFFFFF;
-                    uint64_t addr_fold = ((raw_ptr) ^ (raw_ptr >> 16) ^ (raw_ptr >> 32)) & 0xFFFF;
-                    uint64_t key_fold = ((Rs2) ^ (Rs2 >> 16) ^ (Rs2 >> 32) ^ (Rs2 >> 48)) & 0xFFFF;
+                    uint64_t stored_pac  = (Rs1 >> 48) & 0xFFFF;
+                    uint64_t raw_ptr     = Rs1 & 0x0000FFFFFFFFFFFF;
+                    uint64_t addr_fold   = ((raw_ptr) ^ (raw_ptr >> 16) ^ (raw_ptr >> 32)) & 0xFFFF;
+                    uint64_t key_fold    = ((Rs2) ^ (Rs2 >> 16) ^ (Rs2 >> 32) ^ (Rs2 >> 48)) & 0xFFFF;
                     uint64_t expected_pac = (addr_fold ^ key_fold);
-
+                
                     if (stored_pac == expected_pac) {
                         if (raw_ptr & (1ULL << 47))
-                            Rd = raw_ptr | 0xFFFF000000000000ULL; // Set top 16 bits to 1
+                            Rd = raw_ptr | 0xFFFF000000000000ULL;
                         else
                             Rd = raw_ptr;
                     } else {
                         Rd = 0xDEADDEADDEADDEADULL;
-                        return std::make_shared<IllegalInstFault>("PAC Verification Failed", machInst);
-                        //posible todo, define a new ExceptionCode in src/arch/riscv/interrupts.h, if we really want a custom error type
+                        return std::make_shared<IllegalInstFault>(
+                            "PAC Verification Failed", machInst);
                     }
                 }});
 
                 0x1: pcheck_quarma({{
-                    //
+                    // Re-derive PAC using QARMA-5 and compare against stored value in Rs1[63:48]
+                
+                    static const uint8_t qarma_sbox[16] = {
+                        0x0, 0xE, 0x2, 0xA, 0x9, 0xF, 0x8, 0xB,
+                        0x6, 0x4, 0x3, 0x7, 0xD, 0xC, 0x1, 0x5
+                    };
+                    static const uint8_t qarma_shift[16] = {
+                        0, 11, 6, 13, 10, 1, 12, 7, 5, 14, 3, 8, 15, 4, 9, 2
+                    };
+                    static const uint8_t qarma_shift_inv[16] = {
+                        0, 5, 15, 10, 13, 8, 2, 7, 11, 14, 4, 1, 6, 3, 9, 12
+                    };
+                    static const uint8_t qarma_mix[4][4] = {
+                        {0, 1, 2, 1},
+                        {1, 0, 1, 2},
+                        {2, 1, 0, 1},
+                        {1, 2, 1, 0}
+                    };
+                    static const uint64_t qarma_rc[8] = {
+                        0x0000000000000000ULL,
+                        0x13198A2E03707344ULL,
+                        0xA4093822299F31D0ULL,
+                        0x082EFA98EC4E6C89ULL,
+                        0x452821E638D01377ULL,
+                        0xBE5466CF34E90C6CULL,
+                        0x7EF84F78FD955CB1ULL,
+                        0x85840851F1AC43AAULL,
+                    };
+                
+                    auto qarma_gf16_mul = [](uint8_t a, uint8_t b) -> uint8_t {
+                        uint8_t result = 0;
+                        for (int i = 0; i < 4; i++) {
+                            if (b & 1) result ^= a;
+                            bool hi = (a & 0x8);
+                            a <<= 1;
+                            if (hi) a ^= 0x3;
+                            b >>= 1;
+                        }
+                        return result & 0xF;
+                    };
+                
+                    auto qarma_pack = [](const uint8_t cells[16]) -> uint64_t {
+                        uint64_t out = 0;
+                        for (int i = 0; i < 16; i++)
+                            out |= ((uint64_t)(cells[i] & 0xF)) << (60 - i * 4);
+                        return out;
+                    };
+                
+                    auto qarma_unpack = [](uint64_t v, uint8_t cells[16]) {
+                        for (int i = 0; i < 16; i++)
+                            cells[i] = (v >> (60 - i * 4)) & 0xF;
+                    };
+                
+                    auto qarma_subcell = [&qarma_sbox](uint8_t cells[16]) {
+                        for (int i = 0; i < 16; i++)
+                            cells[i] = qarma_sbox[cells[i]];
+                    };
+                
+                    auto qarma_shiftrows = [&qarma_shift, &qarma_shift_inv](uint8_t cells[16], bool inverse) {
+                        uint8_t tmp[16];
+                        const uint8_t* p = inverse ? qarma_shift_inv : qarma_shift;
+                        for (int i = 0; i < 16; i++)
+                            tmp[i] = cells[p[i]];
+                        for (int i = 0; i < 16; i++)
+                            cells[i] = tmp[i];
+                    };
+                
+                    auto qarma_mixcols = [&qarma_mix, &qarma_gf16_mul](uint8_t cells[16]) {
+                        for (int col = 0; col < 4; col++) {
+                            uint8_t in[4] = {
+                                cells[col], cells[col+4], cells[col+8], cells[col+12]
+                            };
+                            for (int row = 0; row < 4; row++) {
+                                uint8_t acc = 0;
+                                for (int k = 0; k < 4; k++)
+                                    acc ^= qarma_gf16_mul(qarma_mix[row][k], in[k]);
+                                cells[row*4 + col] = acc;
+                            }
+                        }
+                    };
+                
+                    auto qarma_update_tweak = [](uint64_t w) -> uint64_t {
+                        return (w << 1) | (w >> 63);
+                    };
+                
+                    uint64_t stored_pac = (Rs1 >> 48) & 0xFFFFULL;
+                    uint64_t raw_ptr    = Rs1 & 0x0000FFFFFFFFFFFFULL;
+                
+                    // Key schedule
+                    uint64_t k0 = Rs2;
+                    uint64_t k1 = (k0 << 1) | (k0 >> 63);
+                
+                    // Initial whitening
+                    uint64_t state = raw_ptr ^ k0;
+                    uint64_t tweak = Rs2;
+                
+                    uint8_t cells[16];
+                
+                    // Forward rounds (5)
+                    for (int r = 0; r < 5; r++) {
+                        qarma_unpack(state, cells);
+                        uint64_t tmp = qarma_pack(cells) ^ qarma_rc[r] ^ tweak;
+                        qarma_unpack(tmp, cells);
+                        qarma_subcell(cells);
+                        qarma_shiftrows(cells, false);
+                        if (r < 4) qarma_mixcols(cells);
+                        state = qarma_pack(cells);
+                        tweak = qarma_update_tweak(tweak);
+                    }
+                
+                    // Reflection
+                    qarma_unpack(state, cells);
+                    qarma_subcell(cells);
+                    state = qarma_pack(cells);
+                
+                    // Backward rounds (5)
+                    for (int r = 4; r >= 0; r--) {
+                        qarma_unpack(state, cells);
+                        if (r < 4) qarma_mixcols(cells);
+                        qarma_shiftrows(cells, true);
+                        qarma_subcell(cells);
+                        uint64_t tmp = qarma_pack(cells) ^ qarma_rc[r] ^ tweak;
+                        qarma_unpack(tmp, cells);
+                        state = qarma_pack(cells);
+                        tweak = qarma_update_tweak(tweak);
+                    }
+                
+                    // Output whitening
+                    state ^= k1;
+                
+                    uint64_t expected_pac = state & 0xFFFFULL;
+                
+                    if (stored_pac == expected_pac) {
+                        if (raw_ptr & (1ULL << 47))
+                            Rd = raw_ptr | 0xFFFF000000000000ULL;
+                        else
+                            Rd = raw_ptr;
+                    } else {
+                        Rd = 0xDEADDEADDEADDEADULL;
+                        return std::make_shared<IllegalInstFault>("QARMA PAC verification failed", machInst);
+                    }
                 }});
             }
         }
