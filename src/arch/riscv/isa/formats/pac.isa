@@ -122,20 +122,22 @@ def template PACCheckExecute {{
     }
 }};
 
-def format PACAuth(code, *opt_flags) {{
-    regs = ['destRegIdx(0)','srcRegIdx(0)']
-    iop = InstObjParams(name, Name, 'PtrOp', {'code': code, 'regs': ','.join(regs)}, opt_flags)
-    header_output = PACAuthDeclare.subst(iop)
-    decoder_output = PACAuthConstructor.subst(iop)
+def format PACAuth(code, *opt_args) {{
+    iop = InstObjParams(name, Name, 'RegRegOp', 
+        {'code': code, 'imm_code': '/* no imm */', 'regs': ''}, 
+        opt_args)
+    header_output = BasicDeclare.subst(iop)
+    decoder_output = BasicConstructor.subst(iop)
     decode_block = BasicDecode.subst(iop)
-    exec_output = PACAuthExecute.subst(iop)
+    exec_output = BasicExecute.subst(iop)
 }};
 
-def format PACCheck(code, *opt_flags) {{
-    regs = ['destRegIdx(0)','srcRegIdx(0)']
-    iop = InstObjParams(name, Name, 'PtrOp', {'code': code, 'regs': ','.join(regs)}, opt_flags)
-    header_output = PACCheckDeclare.subst(iop)
-    decoder_output = PACCheckConstructor.subst(iop)
+def format PACCheck(code, *opt_args) {{
+    iop = InstObjParams(name, Name, 'RegRegOp', 
+        {'code': code, 'imm_code': '/* no imm */', 'regs': ''}, 
+        opt_args)
+    header_output = BasicDeclare.subst(iop)
+    decoder_output = BasicConstructor.subst(iop)
     decode_block = BasicDecode.subst(iop)
-    exec_output = PACCheckExecute.subst(iop)
+    exec_output = BasicExecute.subst(iop)
 }};
