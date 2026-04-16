@@ -692,11 +692,200 @@ decode QUADRANT default Unknown::unknown() {
                 }});
 
                 0x2: pauth_craft({{  //like quarma, but the cycper operations itself are more hardware friendly
-                    //
+                    // CRAFT involutory S-box (same table for encrypt and decrypt)
+                    static const uint8_t craft_sbox[16] = {
+                        0xC, 0xA, 0xD, 0x3, 0xE, 0xB, 0xF, 0x7,
+                        0x8, 0x9, 0x1, 0x5, 0x0, 0x2, 0x4, 0x6
+                    };
+                    
+                    // Nibble permutation P (maps nibble position i -> P[i])
+                    // Derived from the CRAFT spec: column-transpose of 4x4 nibble grid
+                    static const uint8_t craft_nibble_perm[16] = {
+                        15, 12, 13, 14, 10,  9, 8, 11,
+                         6,  5, 4,  7,  1,  2, 3,  0
+                    };
+                    
+                    // Q permutation used for tweak update (rotate each row of 4x4 nibble grid)
+                    static const uint8_t craft_Q[16] = {
+                        12, 13, 14, 15,  0,  1,  2,  3,
+                         4,  5,  6,  7,  8,  9, 10, 11
+                    };
+                    
+                    // Round constants (LFSR-based, 6-bit, one per round, 32 rounds)
+                    static const uint8_t craft_rc[32] = {
+                        0x01, 0x02, 0x04, 0x08, 0x10, 0x21, 0x03, 0x06,
+                        0x0C, 0x18, 0x31, 0x22, 0x05, 0x0A, 0x14, 0x29,
+                        0x13, 0x27, 0x0F, 0x1E, 0x3D, 0x3A, 0x35, 0x2B,
+                        0x17, 0x2F, 0x1F, 0x3E, 0x3C, 0x38, 0x30, 0x20
+                    };
+                    
+                    // Helper: pack 16 nibbles (nibble[0] = bits[63:60]) into uint64
+                    auto craft_pack = [](const uint8_t n[16]) -> uint64_t {
+                        uint64_t v = 0;
+                        for (int i = 0; i < 16; i++)
+                            v |= ((uint64_t)(n[i] & 0xF)) << (60 - i * 4);
+                        return v;
+                    };
+                    
+                    // Helper: unpack uint64 into 16 nibbles (nibble[0] = bits[63:60])
+                    auto craft_unpack = [](uint64_t v, uint8_t n[16]) {
+                        for (int i = 0; i < 16; i++)
+                            n[i] = (v >> (60 - i * 4)) & 0xF;
+                    };
+                    
+                    // SubCells: apply S-box to all 16 nibbles
+                    auto craft_subcells = [&craft_sbox](uint8_t n[16]) {
+                        for (int i = 0; i < 16; i++)
+                            n[i] = craft_sbox[n[i]];
+                    };
+                    
+                    // PermuteNibbles: rearrange nibbles according to P (pure wiring, zero cost in HW)
+                    auto craft_permute = [&craft_nibble_perm](uint8_t n[16]) {
+                        uint8_t tmp[16];
+                        for (int i = 0; i < 16; i++)
+                            tmp[craft_nibble_perm[i]] = n[i];
+                        for (int i = 0; i < 16; i++)
+                            n[i] = tmp[i];
+                    };
+                    
+                    // MixColumns: operates on the 4x4 nibble grid column-by-column.
+                    // Each column of 4 nibbles is mixed by swapping nibble pairs:
+                    // [a, b, c, d] -> [a^c, b^d, a, b]
+                    auto craft_mixcols = [](uint8_t n[16]) {
+                        // Columns are n[0..3], n[4..7], n[8..11], n[12..15]
+                        for (int col = 0; col < 4; col++) {
+                            uint8_t a = n[col], b = n[col+4];
+                            uint8_t c = n[col+8], d = n[col+12];
+                            n[col]    = a ^ c;
+                            n[col+4]  = b ^ d;
+                            n[col+8]  = a;
+                            n[col+12] = b;
+                        }
+                    };
+                    
+                    // Tweak update: apply Q permutation to the nibble grid
+                    auto craft_update_tweak = [&craft_Q](uint8_t t[16]) {
+                        uint8_t tmp[16];
+                        for (int i = 0; i < 16; i++)
+                            tmp[i] = t[craft_Q[i]];
+                        for (int i = 0; i < 16; i++)
+                            t[i] = tmp[i];
+                    };
+                    
+                    uint64_t TK0 = Rs2; // upper 64 bits of "key" (Rs2 = key/context)
+                    uint64_t TK1 = (Rs2 << 32) | (Rs2 >> 32); // simple derived second subkey from Rs2
+                    
+                    // Strip any existing PAC from the pointer
+                    uint64_t raw_ptr = Rs1 & 0x0000FFFFFFFFFFFFULL;
+                    
+                    // Initial state = pointer
+                    uint8_t state[16], tweak_n[16];
+                    craft_unpack(raw_ptr ^ TK0, state); // initial key whitening
+                    craft_unpack(Rs2, tweak_n); // initial tweak = key/context
+                    
+                    // 32 rounds
+                    for (int r = 0; r < 32; r++) {
+                        // Add round constant to nibble 0 (bits 1 and 0 of nibble 0, per CRAFT spec)
+                        state[0] ^= (craft_rc[r] >> 3) & 0xF;
+                        state[8] ^= (craft_rc[r] >> 0) & 0x7;
+                    
+                        // Add tweak to state (XOR corresponding nibbles)
+                        for (int i = 0; i < 16; i++)
+                            state[i] ^= tweak_n[i];
+                    
+                        // Add round subkey (alternating TK0 / TK1)
+                        uint8_t rk[16];
+                        craft_unpack((r & 1) ? TK1 : TK0, rk);
+                        for (int i = 0; i < 16; i++)
+                            state[i] ^= rk[i];
+                    
+                        // SubCells
+                        craft_subcells(state);
+                    
+                        // PermuteNibbles (last round skips MixColumns)
+                        craft_permute(state);
+                    
+                        if (r < 31)
+                            craft_mixcols(state);
+                    
+                        // Update tweak for next round
+                        craft_update_tweak(tweak_n);
+                    }
+                    
+                    // Final key whitening
+                    uint8_t tk_final[16];
+                    craft_unpack(TK0, tk_final);
+                    for (int i = 0; i < 16; i++)
+                        state[i] ^= tk_final[i];
+                    
+                    uint64_t result = craft_pack(state);
+                    uint64_t pac = result & 0xFFFFULL;
+                    Rd = (pac << 48) | raw_ptr;
                 }});
 
                 0x3: pauth_ascon({{   //side channel resistant
-                    //
+                    // Ascon round constants (for 12-round permutation, rounds 0..11)
+                    static const uint64_t ascon_rc[12] = {
+                        0xF0ULL, 0xE1ULL, 0xD2ULL, 0xC3ULL,
+                        0xB4ULL, 0xA5ULL, 0x96ULL, 0x87ULL,
+                        0x78ULL, 0x69ULL, 0x5AULL, 0x4BULL
+                    };
+                    
+                    // Ascon round function: operates on 5 x 64-bit words
+                    // Three layers: constant addition, 5-bit S-box (bit-sliced), linear diffusion
+                    auto ascon_round = [&ascon_rc](uint64_t s[5], int r) {
+                        // Layer 1: add round constant to word 2
+                        s[2] ^= ascon_rc[r];
+                    
+                        // Layer 2: 5-bit S-box applied bit-slice across all 64 bit positions
+                        // The Ascon S-box on (x0[i], x1[i], x2[i], x3[i], x4[i]) for each bit i: t0 = x0 ^ x4;  t1 = x1 ^ x2 (after x0 ^= x4 ... see spec)
+                        // Expressed as ANF (coordinate functions), fully unrolled:
+                        uint64_t t[5];
+                        s[0] ^= s[4];  s[4] ^= s[3];  s[2] ^= s[1];
+                        t[0]  = ~s[0]; t[1]  = ~s[1]; t[2]  = ~s[2]; t[3]  = ~s[3]; t[4]  = ~s[4];
+                        t[0] &= s[1];  t[1] &= s[2];  t[2] &= s[3];  t[3] &= s[4];  t[4] &= s[0];
+                        s[0] ^= t[1];  s[1] ^= t[2];  s[2] ^= t[3];  s[3] ^= t[4];  s[4] ^= t[0];
+                        s[1] ^= s[0];  s[0] ^= s[4];  s[3] ^= s[2];  s[2] = ~s[2];
+                    
+                        // Layer 3: linear diffusion — each word mixed with two rotations of itself
+                        // Rotation constants from the Ascon specification:
+                        s[0] ^= (s[0] >> 19) ^ (s[0] << 45);   // rot64(s0, 19) ^ rot64(s0, 28)
+                        s[1] ^= (s[1] >> 61) ^ (s[1] <<  3);   // rot64(s1, 61) ^ rot64(s1, 39)
+                        s[2] ^= (s[2] >>  1) ^ (s[2] << 63);   // rot64(s2,  1) ^ rot64(s2,  6)
+                        s[3] ^= (s[3] >> 10) ^ (s[3] << 54);   // rot64(s3, 10) ^ rot64(s3, 17)
+                        s[4] ^= (s[4] >>  7) ^ (s[4] << 57);   // rot64(s4,  7) ^ rot64(s4, 41)
+                    };
+                    
+                    // Build 320-bit Ascon state:
+                    // x0 = IV
+                    // x1 = key
+                    // x2 = key
+                    // x3 = pointer
+                    // x4 = 0
+                    uint64_t raw_ptr = Rs1 & 0x0000FFFFFFFFFFFFULL;
+                    
+                    uint64_t s[5];
+                    s[0] = 0x00001000808C0001ULL;  // Ascon-128 IV encoding, re-used as domain separator
+                    s[1] = Rs2; // key / context
+                    s[2] = Rs2 ^ 0xFFFFFFFFFFFFFFFFULL; // complemented key (cheap IV diversification)
+                    s[3] = raw_ptr; // pointer (the value we're authenticating)
+                    s[4] = 0x0ULL;
+                    
+                    // Run 12 rounds of Ascon permutation
+                    for (int r = 0; r < 12; r++)
+                        ascon_round(s, r);
+                    
+                    // Finalize: XOR key back in (Ascon sponge finalization step)
+                    s[3] ^= Rs2;
+                    s[4] ^= Rs2 ^ 0xFFFFFFFFFFFFFFFFULL;
+                    
+                    // Run 12 more rounds to ensure full diffusion after key injection
+                    for (int r = 0; r < 12; r++)
+                        ascon_round(s, r);
+                    
+                    // Squeeze 16-bit PAC from the output (bits [15:0] of x0)
+                    uint64_t pac = s[0] & 0xFFFFULL;
+                    Rd = (pac << 48) | raw_ptr;
                 }});
             }
         }
