@@ -10,6 +10,7 @@ from gem5.components.processors.base_cpu_processor import BaseCPUProcessor
 
 from m5.objects import RiscvO3CPU
 from m5.objects import TournamentBP
+from m5.objects import BranchPredictor
 
 # 1. Setup Processor (Using Timing so we can see cycle progress)
 class MyOutOfOrderCore(BaseCPUCore):
@@ -27,7 +28,7 @@ class MyOutOfOrderCore(BaseCPUCore):
         self.core.numPhysIntRegs = num_int_regs
         self.core.numPhysFloatRegs = num_fp_regs
 
-        self.core.branchPred = TournamentBP()
+        self.core.branchPred = BranchPredictor(conditionalBranchPred=TournamentBP())
 
         self.core.LQEntries = 128
         self.core.SQEntries = 128
