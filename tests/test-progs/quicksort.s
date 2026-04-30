@@ -34,7 +34,7 @@ swap:
 	.type	partition, @function
 partition:
 	addi	sp,sp,-48
-	.insn r CUSTOM_0, 0x0, 0x0, ra, zero, ra
+	.insn r CUSTOM_0, 0x0, 0x0, ra, ra, zero
 	sd	ra,40(sp)
 	sd	s0,32(sp)
 	addi	s0,sp,48
@@ -106,7 +106,7 @@ partition:
 	sext.w	a5,a5
 	mv	a0,a5
 	ld	ra,40(sp)
-	.insn r CUSTOM_1, 0x0, 0x0, ra, zero, ra
+	.insn r CUSTOM_1, 0x0, 0x0, ra, ra, zero
 	ld	s0,32(sp)
 	addi	sp,sp,48
 	jr	ra
@@ -116,7 +116,7 @@ partition:
 	.type	quickSort, @function
 quickSort:
 	addi	sp,sp,-48
-	.insn r CUSTOM_0, 0x0, 0x0, ra, zero, ra
+	.insn r CUSTOM_0, 0x0, 0x0, ra, ra, zero
 	sd	ra,40(sp)
 	sd	s0,32(sp)
 	addi	s0,sp,48
@@ -158,7 +158,7 @@ quickSort:
 .L9:
 	nop
 	ld	ra,40(sp)
-	.insn r CUSTOM_1, 0x0, 0x0, ra, zero, ra
+	.insn r CUSTOM_1, 0x0, 0x0, ra, ra, zero
 	ld	s0,32(sp)
 	addi	sp,sp,48
 	jr	ra
@@ -168,7 +168,7 @@ quickSort:
 	.type	main, @function
 main:
 	addi	sp,sp,-416
-	.insn r CUSTOM_0, 0x0, 0x0, ra, zero, ra
+	.insn r CUSTOM_0, 0x0, 0x0, ra, ra, zero
 	sd	ra,408(sp)
 	sd	s0,400(sp)
 	addi	s0,sp,416
@@ -200,8 +200,7 @@ main:
 	li	a5,0
 	mv	a0,a5
 	ld	ra,408(sp)
-	.insn r 0x33, 0, 0, a0, a1, a2
-	.insn r CUSTOM_1, 0, 0, ra, zero, ra
+	.insn r CUSTOM_1, 0, 0, ra, ra, zero
 	ld	s0,400(sp)
 	addi	sp,sp,416
 	jr	ra
