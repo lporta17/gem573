@@ -26,7 +26,7 @@ board = SimpleBoard(
 
 # 4. Point to your compiled binary
 board.set_se_binary_workload(
-    BinaryResource(local_path="tests/test-progs/quicksort_riscv")
+    BinaryResource(local_path="tests/test-progs/delaytest_riscv")
 )
 
 # 5. Run it
